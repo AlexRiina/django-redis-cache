@@ -18,6 +18,12 @@ LOCATIONS = [
     '127.0.0.1:6389',
 ]
 
+TEST_DELAY = .3
+
+
+def delay():
+    time.sleep(TEST_DELAY)
+
 
 @override_settings(CACHES={
     'default': {
@@ -50,7 +56,7 @@ class MasterSlaveTestCase(SetupMixin, TestCase):
     def test_set(self):
         cache = self.get_cache()
         cache.set('a', 'a')
-        time.sleep(.2)
+        delay()
         for client in self.cache.clients.values():
             key = cache.make_key('a')
             self.assertIsNotNone(client.get(key))
@@ -68,7 +74,7 @@ class MasterSlaveTestCase(SetupMixin, TestCase):
         cache = self.get_cache()
         cache.set('a', 0)
         cache.incr('a')
-        time.sleep(.2)
+        delay()
         key = cache.make_key('a')
         for client in self.cache.clients.values():
             self.assertEqual(int(client.get(key)), 1)
@@ -76,10 +82,10 @@ class MasterSlaveTestCase(SetupMixin, TestCase):
     def test_delete(self):
         cache = self.get_cache()
         cache.set('a', 'a')
-        time.sleep(.2)
+        delay()
         self.assertEqual(cache.get('a'), 'a')
         cache.delete('a')
-        time.sleep(.2)
+        delay()
         key = cache.make_key('a')
         for client in self.cache.clients.values():
             self.assertIsNone(client.get(key))
@@ -87,9 +93,9 @@ class MasterSlaveTestCase(SetupMixin, TestCase):
     def test_clear(self):
         cache = self.get_cache()
         cache.set('a', 'a')
-        time.sleep(.2)
+        delay()
         self.assertEqual(cache.get('a'), 'a')
         cache.clear()
-        time.sleep(.2)
+        delay()
         for client in self.cache.clients.values():
             self.assertEqual(len(client.keys('*')), 0)
