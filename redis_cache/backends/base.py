@@ -37,6 +37,8 @@ def get_client(write=False):
 
 
 class BaseRedisCache(BaseCache):
+    DELIMITER = '|'
+    GROUP_CLIENT_KEY = '$$$'
 
     def __init__(self, server, params):
         """
@@ -218,11 +220,27 @@ class BaseRedisCache(BaseCache):
     def make_key(self, key, version=None):
         if not isinstance(key, CacheKey):
             versioned_key = super(BaseRedisCache, self).make_key(key, version)
-            return CacheKey(key, versioned_key)
+            return CacheKey(key, versioned_key, version=version)
         return key
 
     def make_keys(self, keys, version=None):
         return [self.make_key(key, version=version) for key in keys]
+
+    def make_group_key(self, key, version=None):
+        """Make key for the collection of group names associated with the key.
+        """
+        group_key = self.DELIMITER.join([self.GROUP_CLIENT_KEY, str(key)])
+        versioned_group_key = self.make_key(group_key, version=version)
+        return versioned_group_key
+
+    def make_group_members_key(self, group, version=None):
+        """Create key for a collection of keys associated with a group.
+        """
+        group_members_key = self.DELIMITER.join(['members', str(group)])
+        versioned_group_members_key = self.make_key(
+            group_members_key, version=version
+        )
+        return versioned_group_members_key
 
     def get_timeout(self, timeout):
         if timeout is DEFAULT_TIMEOUT:
@@ -232,6 +250,35 @@ class BaseRedisCache(BaseCache):
             timeout = int(timeout)
 
         return timeout
+
+    def invalidate(self, key, version=None):
+        group_client = self.get_client(self.GROUP_CLIENT_KEY, write=True)
+        group_key = self.make_group_key(key, version=version)
+        groups = [
+            group.decode("utf-8") for group in group_client.smembers(group_key)
+        ]
+        for group in groups:
+            group_members_key = self.make_group_members_key(group, version=version)
+            members = group_client.smembers(group_members_key)
+            members = [member.decode("utf-8") for member in members]
+            for member in members:
+                # Delete the member
+                member_client = self.get_client(member, write=True)
+                member_key = self.make_key(member, version=version)
+                member_client.delete(member_key)
+
+                # Delete member group
+                member_group_key = self.make_group_key(member, version=version)
+                group_client.delete(member_group_key)
+            group_client.delete(group_members_key)
+
+    def add_group(self, key, group, version=None):
+        group_client = self.get_client(self.GROUP_CLIENT_KEY, write=True)
+        group_key = self.make_group_key(key, version=version)
+        group_client.sadd(group_key, group)
+
+        group_members_key = self.make_group_members_key(group, version=version)
+        group_client.sadd(group_members_key, key)
 
     ####################
     # Django cache api #
@@ -244,21 +291,22 @@ class BaseRedisCache(BaseCache):
         Returns ``True`` if the object was added, ``False`` if not.
         """
         timeout = self.get_timeout(timeout)
-        return self._set(client, key, self.prep_value(value), timeout, _add_only=True)
+        prepped_value = self.prep_value(value)
+        return self._set(client, key, prepped_value, timeout, _add_only=True)
 
     @get_client()
-    def get(self, client, key, default=None):
+    def get(self, client, key, default=None, group=None):
         """Retrieve a value from the cache.
 
         Returns deserialized value if key is found, the default if not.
         """
-        value = client.get(key)
-        if value is None:
+        raw_value = client.get(key)
+        if raw_value is None:
             return default
-        value = self.get_value(value)
+        value = self.get_value(raw_value)
         return value
 
-    def _set(self, client, key, value, timeout, _add_only=False):
+    def _set(self, client, key, value, timeout, _add_only=False, group=None):
         if timeout is None or timeout == 0:
             if _add_only:
                 return client.setnx(key, value)
@@ -274,12 +322,25 @@ class BaseRedisCache(BaseCache):
             return False
 
     @get_client(write=True)
-    def set(self, client, key, value, timeout=DEFAULT_TIMEOUT):
+    def set(self, client, key, value, timeout=DEFAULT_TIMEOUT, group=None):
         """Persist a value to the cache, and set an optional expiration time.
         """
-        timeout = self.get_timeout(timeout)
+        if group:
+            original_key = key._original_key
+            version = key._version
+            group_client = self.get_client(self.GROUP_CLIENT_KEY, write=True)
+            group_key = self.make_group_key(original_key, version=version)
+            # If the group key exists, we're changing the value and need to
+            # invalidate the key
+            if group_client.exists(group_key):
+                self.invalidate(original_key, version=version)
 
-        result = self._set(client, key, self.prep_value(value), timeout, _add_only=False)
+        timeout = self.get_timeout(timeout)
+        prepped_value = self.prep_value(value)
+        result = self._set(client, key, prepped_value, timeout, _add_only=False)
+
+        if group:
+            self.add_group(original_key, group, version=version)
 
         return result
 

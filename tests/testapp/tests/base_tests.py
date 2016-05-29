@@ -609,6 +609,24 @@ class BaseRedisTestCase(SetupMixin):
         ttl = self.cache.ttl('a')
         self.assertAlmostEqual(ttl, 20)
 
+    def test_group_set(self):
+        # Setup Data
+        self.cache.set('a', 'a', group='A')
+        self.cache.set('b', 'b', group='A')
+        self.cache.set('c', 'c', group='A')
+        self.cache.set('d', 'd', group='B')
+
+        self.assertEqual(self.cache.get('a'), 'a')
+        self.assertEqual(self.cache.get('b'), 'b')
+        self.assertEqual(self.cache.get('c'), 'c')
+        self.assertEqual(self.cache.get('d'), 'd')
+
+        # Setting 'a' to something different should invalidate 'b' and 'c'
+        self.cache.set('a', 'different', group='A')
+        self.assertEqual(self.cache.get('b'), None)
+        self.assertEqual(self.cache.get('c'), None)
+        self.assertEqual(self.cache.get('d'), 'd')
+
 
 class ConfigurationTestCase(SetupMixin, TestCase):
 
