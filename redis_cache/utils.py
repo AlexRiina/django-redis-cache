@@ -23,9 +23,10 @@ class CacheKey(object):
     """
     A stub string class that we can use to check if a key was created already.
     """
-    def __init__(self, key, versioned_key):
+    def __init__(self, key, versioned_key, version=None):
         self._original_key = key
         self._versioned_key = versioned_key
+        self._version = version
 
     def __eq__(self, other):
         return self._versioned_key == other
